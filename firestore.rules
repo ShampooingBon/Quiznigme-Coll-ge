@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isTeacher() { return signedIn() && request.auth.token.firebase.sign_in_provider == 'password'; }
+
+    // Profil d'une professeure : visible et modifiable uniquement par elle
+    match /teachers/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update: if isTeacher() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['prenom', 'classes', 'identifiant'])
+        && request.resource.data.prenom is string && request.resource.data.prenom.size() <= 60
+        && request.resource.data.classes is list && request.resource.data.classes.size() <= 60;
+    }
+
+    match /exercises/{code} {
+      // Un élève peut ouvrir un exercice s'il connait son code (impossible de lister les codes)
+      allow get: if true;
+      allow list: if signedIn() && resource.data.teacherUid == request.auth.uid;
+      allow create: if isTeacher() && code.size() == 10
+        && request.resource.data.teacherUid == request.auth.uid
+        && request.resource.data.questions is list && request.resource.data.questions.size() <= 100;
+      allow update, delete: if isTeacher() && resource.data.teacherUid == request.auth.uid;
+
+      match /results/{rid} {
+        // Un élève peut envoyer son résultat ; seule la professeure propriétaire peut les lire
+        allow create: if exists(/databases/$(database)/documents/exercises/$(code))
+          && request.resource.data.keys().hasOnly(['prenom', 'classe', 'stars', 'at'])
+          && request.resource.data.prenom is string && request.resource.data.prenom.size() > 0 && request.resource.data.prenom.size() <= 40
+          && request.resource.data.classe is string && request.resource.data.classe.size() > 0 && request.resource.data.classe.size() <= 20
+          && request.resource.data.stars is list && request.resource.data.stars.size() <= 100;
+        allow read: if signedIn()
+          && get(/databases/$(database)/documents/exercises/$(code)).data.teacherUid == request.auth.uid;
+      }
+    }
+  }
+}
